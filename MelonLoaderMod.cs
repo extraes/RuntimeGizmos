@@ -1,8 +1,9 @@
 ﻿using HarmonyLib;
 using MelonLoader;
 using System;
-using System.Linq;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using UnityEngine;
 
 namespace Gizmos
@@ -20,17 +21,29 @@ namespace Gizmos
     {
         private GameObject lineRendererObject;
         public static LineRenderer lineRenderer;
+        private AssetBundle bundle;
+        public static Material mat;
 
         public override void OnApplicationStart()
         {
-            //MelonLogger.Msg("Loading AssetBundle...");
             var category = MelonPreferences.CreateCategory("RuntimeGizmos");
             var entry = category.CreateEntry("patchRaycastsAndOverlaps", false, "patchRaycastsAndOverlaps");
-            if (entry.Value) HarmonyInstance.Patch(
-                                typeof(Physics).GetMethod("Raycast",
-                                    new Type[] { typeof(Vector3), typeof(Vector3), typeof(float) }),
-                                postfix: new HarmonyMethod(typeof(RaycastPatch).GetMethod("Postfix"))
-                                );
+            if (entry.Value) PatchRaycasts();
+
+            MelonLogger.Msg("Loading AssetBundle...");
+
+
+            using (Stream stream = Assembly.GetManifestResourceStream("RuntimeGizmos.Resources.materials"))
+            {
+                using (MemoryStream ms = new MemoryStream((int)stream.Length))
+                {
+                    stream.CopyTo(ms);
+                    bundle = AssetBundle.LoadFromMemory(ms.ToArray());
+                }
+            }
+
+            mat = bundle.LoadAsset<Material>("assets/bundledassets/wireframe.mat");
+            mat.hideFlags = HideFlags.DontUnloadUnusedAsset;
         }
 
         public override void OnSceneWasInitialized(int buildIndex, string sceneName)
@@ -39,13 +52,30 @@ namespace Gizmos
             lineRenderer = lineRendererObject.AddComponent<LineRenderer>();
             lineRenderer.material = Resources.FindObjectsOfTypeAll<Material>().FirstOrDefault(m => m.name == "ZPEFM_lighting");
         }
+
+        private void PatchRaycasts()
+        {
+            HarmonyMethod postfix1 = new HarmonyMethod(typeof(RaycastPatches).GetMethod("Postfix"));
+            HarmonyInstance.Patch(typeof(Physics).GetMethod("Raycast", new Type[] { typeof(Vector3), typeof(Vector3), typeof(RaycastHit), typeof(float), typeof(int) }),
+                                  postfix: postfix1);
+            HarmonyInstance.Patch(typeof(Physics).GetMethod("Raycast", new Type[] { typeof(Vector3), typeof(Vector3), typeof(float), typeof(int), typeof(QueryTriggerInteraction) }),
+                                  postfix: postfix1);
+            HarmonyInstance.Patch(typeof(Physics).GetMethod("Raycast", new Type[] { typeof(Vector3), typeof(Vector3), typeof(float), typeof(int) }),
+                                  postfix: postfix1);
+            HarmonyInstance.Patch(typeof(Physics).GetMethod("Raycast", new Type[] { typeof(Vector3), typeof(Vector3), typeof(float) }),
+                                  postfix: postfix1);
+            HarmonyInstance.Patch(typeof(Physics).GetMethod("Raycast", new Type[] { typeof(Vector3), typeof(Vector3), typeof(RaycastHit), typeof(float), typeof(int), typeof(QueryTriggerInteraction) }),
+                                  postfix: postfix1);
+            HarmonyInstance.Patch(typeof(Physics).GetMethod("Raycast", new Type[] { typeof(Vector3), typeof(Vector3), typeof(RaycastHit), typeof(float) }),
+                                  postfix: postfix1);
+        }
     }
 
-    public static class RaycastPatch
+    public static class RaycastPatches
     {
         public static void Postfix(Vector3 origin, Vector3 direction, float maxDistance)
         {
-            MelonLogger.Msg("Postfix fired with values:");
+            MelonLogger.Msg("Postfix1 fired with values:");
             MelonLogger.Msg($"Origin: {origin.x}, {origin.y}, {origin.z}");
             MelonLogger.Msg($"Direction: {direction.x}, {direction.y}, {direction.z}");
             MelonLogger.Msg($"Distance: {maxDistance}");
@@ -54,8 +84,16 @@ namespace Gizmos
                 origin,
                 origin + direction.normalized * maxDistance
             });
-        }
+            var cube1 = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            cube1.transform.position = origin;
+            cube1.transform.localScale = Vector3.one / 10f;
+            cube1.GetComponent<MeshRenderer>().material = RuntimeGizmos.mat;
 
+            var cube2 = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            cube2.transform.position = origin + direction.normalized * maxDistance;
+            cube2.transform.localScale = Vector3.one / 10f;
+            cube2.GetComponent<MeshRenderer>().material = RuntimeGizmos.mat;
+        }
     }
 
     public static class Draw
